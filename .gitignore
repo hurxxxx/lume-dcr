@@ -1,0 +1,9 @@
+.DS_Store
+.venv/
+.paddlex_cache/
+outputs/
+sampledocs/
+*.log
+__pycache__/
+*.pyc
+고성능 문서 OCR 파서_ 기술 스택 및 시장 조사.pdf
