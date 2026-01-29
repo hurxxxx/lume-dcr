@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Optional
+import inspect
 
 import fitz  # PyMuPDF
 import numpy as np
@@ -109,6 +110,35 @@ def build_markdown(pages_results):
         if isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict):
             if "parsing_res_list" in items[0]:
                 items = items[0]["parsing_res_list"]
+        # PaddleOCR text-only output sometimes nests detections
+        if (
+            isinstance(items, list)
+            and len(items) == 1
+            and isinstance(items[0], list)
+            and items[0]
+            and isinstance(items[0][0], (list, tuple))
+        ):
+            items = items[0]
+        # Handle PaddleOCR text-only detections: [ [box, (text, score)], ... ]
+        if (
+            isinstance(items, list)
+            and items
+            and isinstance(items[0], (list, tuple))
+            and len(items[0]) >= 2
+            and isinstance(items[0][1], (list, tuple))
+        ):
+            texts = []
+            for det in items:
+                if not isinstance(det, (list, tuple)) or len(det) < 2:
+                    continue
+                text = None
+                if isinstance(det[1], (list, tuple)) and det[1]:
+                    text = det[1][0]
+                if text:
+                    texts.append(text)
+            if texts:
+                lines.extend(texts)
+                continue
         for item in items:
             if not isinstance(item, dict):
                 if isinstance(item, str):
@@ -169,6 +199,26 @@ def main():
     parser.add_argument("--out", type=str, default=None)
     parser.add_argument("--dpi", type=int, default=200)
     parser.add_argument("--max-pages", type=int, default=None)
+    parser.add_argument(
+        "--disable-chart",
+        action="store_true",
+        help="Disable chart recognition (PP-Chart2Table) to avoid Paddle executor errors.",
+    )
+    parser.add_argument(
+        "--disable-layout",
+        action="store_true",
+        help="Disable layout analysis (PPStructure) for unsupported languages.",
+    )
+    parser.add_argument(
+        "--disable-table",
+        action="store_true",
+        help="Disable table recognition in PPStructure.",
+    )
+    parser.add_argument(
+        "--ocr-only",
+        action="store_true",
+        help="Run PaddleOCR text-only (no layout/structure) instead of PP-Structure.",
+    )
     args = parser.parse_args()
 
     pdf_path = Path(args.pdf).resolve()
@@ -182,14 +232,48 @@ def main():
     os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(Path(__file__).resolve().parent.parent / ".paddlex_cache"))
 
     # Lazy import so env is set first
-    from paddleocr import PPStructureV3
+    if args.ocr_only:
+        from paddleocr import PaddleOCR
+        engine = PaddleOCR(lang="korean", use_angle_cls=True)
 
-    engine = PPStructureV3(lang="korean", ocr_version="PP-OCRv5")
+        def run_engine(image):
+            return engine.ocr(image, cls=True)
+    else:
+        try:
+            from paddleocr import PPStructureV3
+            engine = PPStructureV3(
+                lang="korean",
+                ocr_version="PP-OCRv5",
+                use_chart_recognition=not args.disable_chart,
+            )
+
+            def run_engine(image):
+                predict_kwargs = {}
+                sig = inspect.signature(engine.predict)
+                if args.disable_chart and "use_chart_recognition" in sig.parameters:
+                    predict_kwargs["use_chart_recognition"] = False
+                if args.disable_table and "use_table_recognition" in sig.parameters:
+                    predict_kwargs["use_table_recognition"] = False
+                if args.disable_layout and "use_region_detection" in sig.parameters:
+                    predict_kwargs["use_region_detection"] = False
+                return engine.predict(image, **predict_kwargs)
+        except ImportError:
+            from paddleocr import PPStructure
+            engine = PPStructure(
+                lang="korean",
+                ocr_version="PP-OCRv4",
+                structure_version="PP-StructureV2",
+                layout=not args.disable_layout,
+                table=not args.disable_table,
+            )
+
+            def run_engine(image):
+                return engine(image)
 
     pages = render_pdf_pages(pdf_path, dpi=args.dpi, max_pages=args.max_pages)
     results = []
     for idx, img in enumerate(pages):
-        pred = engine.predict(img)
+        pred = run_engine(img)
         # Some pipelines return a generator
         if not isinstance(pred, (list, dict)) and hasattr(pred, "__iter__"):
             pred = list(pred)
