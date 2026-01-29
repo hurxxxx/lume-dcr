@@ -1,37 +1,87 @@
 # Lume DCR - Plan (2026-01-28)
 
 ## Goal
-Improve OCR/document parsing quality without VLLM by prioritizing text-layer extraction, high-quality OCR for scanned pages, and robust structured output.
 
-## Scope (this iteration)
-- Add a hybrid pipeline: text-layer extraction when available, OCR fallback otherwise.
-- Tune PP-StructureV3 for quality (higher DPI, orientation/deskew, table/formula on).
-- Normalize outputs (Markdown + JSON) and keep files compact.
-- Build a minimal comparison harness for 20251202190315023.pdf.
+RAG용 고품질 문서 추출 SDK. 텍스트 + 이미지 추출, 한국어 문서 최적화.
 
-## Proposed Steps
-1) Detect text-layer presence per page (PyMuPDF):
-   - If text length > threshold, use PDF text extraction.
-   - Else render page image and run PP-StructureV3 OCR.
-2) Add OCR quality settings:
-   - DPI 300/350 option.
-   - Enable doc orientation, textline orientation, table and formula recognition.
-3) Unify output:
-   - JSON schema: page_index, source_type (pdf_text/ocr), blocks (type, bbox, text/html).
-   - Markdown: ordered blocks, tables embedded as HTML.
-4) Evaluation on 20251202190315023.pdf:
-   - Compare PDF-text baseline vs OCR vs hybrid (SequenceMatcher/CER).
-   - Record sample diffs and highlight failure modes.
-5) Documentation:
-   - Update README with hybrid mode usage.
+**핵심 원칙**:
+1. **원본 구조 우선** — 오피스 문서는 파서로, OCR은 필요한 곳에만
+2. **다중 요소 품질 판별** — 단순 길이가 아닌 다양한 신뢰도 지표로 결정
+3. **표 이중화** — 구조화 데이터 + 검색용 텍스트 동시 저장
+4. **이미지 추출** — 멀티모달 RAG를 위한 임베디드 이미지 추출
 
-## Files to Change
-- scripts/ppocr_cpu_convert.py (quality flags + output normalization)
-- scripts/pdf_text_convert.py (reuse for hybrid path)
-- scripts/compare_pipelines.py (add CER/WER or improved metrics)
-- (new) scripts/hybrid_convert.py
-- README.md (usage)
+---
 
-## Validation
-- Run page-1 test on 20251202190315023.pdf.
-- If improved, run full document and compare metrics.
+## Phase 1: 핵심 하이브리드 파이프라인 (PDF)
+
+### 1.1 품질 판별 기준 정의
+- 텍스트 레이어 신뢰도를 판단할 기준과 가중치를 정의
+- 저품질 페이지는 OCR로 대체
+
+### 1.2 PDF 하이브리드 처리 흐름 확립
+- 페이지별로 텍스트 레이어 vs OCR 선택
+- 결과를 통합 스키마로 병합
+
+### 1.3 검증
+- 텍스트 레이어/ OCR 선택 비율과 오류 유형을 확인
+
+---
+
+## Phase 2: 오피스 문서 지원 + 이미지 추출
+
+### 2.1 입력 라우팅 정책 정리
+- 문서 유형별 파서 라우팅 기준을 정리
+
+### 2.2 오피스 파서 원칙 확립
+- 오피스 문서는 기본적으로 파서 우선
+- 이미지 위주 페이지는 OCR로 보완
+
+### 2.3 이미지 추출 정책 정리
+- 문서 유형별 이미지 추출 기준 정의
+
+### 2.4 검증
+- 오피스 텍스트/이미지 추출 누락 여부 확인
+
+---
+
+## Phase 3: OCR 후처리 (LLM 교정)
+
+### 3.1 참조 텍스트 기반 교정
+- 파서 텍스트를 OCR 교정에 활용
+- 구조/순서/좌표는 유지
+
+### 3.2 교정 규칙 확립
+- 근거 없는 수정 금지
+- 숫자/코드/날짜는 일치할 때만 교체
+- 변경 로그로 추적 가능하게
+
+### 3.3 검증
+- CER/WER 개선 여부 확인
+- 구조 훼손 여부 확인
+
+---
+
+## Phase 4: RAG 최적화
+
+### 4.1 표 이중화 정책
+- 구조화 결과와 검색용 텍스트 동시 제공
+
+### 4.2 메타데이터 스키마 확립
+- 섹션 경로, 앵커, 블록 ID 등 메타데이터 일관화
+
+### 4.3 시맨틱 청킹 전략
+- 문서 유형별 청킹 기준 정의
+- 헤딩/표 경계 존중
+
+---
+
+## Phase 5: 평가 및 검증 체계
+
+### 5.1 테스트 범위 정의
+- 문서 유형별 대표 케이스 선정
+
+### 5.2 품질 지표 정의
+- 텍스트 정확도, 표 구조 정확도, 이미지 추출률
+
+### 5.3 베이스라인 비교 정책
+- 비교 대상과 평가 방식 결정

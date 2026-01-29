@@ -83,22 +83,22 @@ def to_builtin(obj: Any):
 
 
 def render_pdf_pages(pdf_path: Path, dpi: int, max_pages: Optional[int]):
-    doc = fitz.open(pdf_path)
     zoom = dpi / 72.0
     mat = fitz.Matrix(zoom, zoom)
-    pages = []
-    total = len(doc)
-    limit = total if max_pages is None else min(total, max_pages)
-    for i in range(limit):
-        page = doc.load_page(i)
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-        if img.shape[2] == 4:
-            img = img[:, :, :3]
-        # Paddle expects BGR
-        img = img[:, :, ::-1]
-        pages.append(img)
-    return pages
+    with fitz.open(pdf_path) as doc:
+        total = len(doc)
+        limit = total if max_pages is None else min(total, max_pages)
+        for i in range(limit):
+            page = doc.load_page(i)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                pix.height, pix.width, pix.n
+            )
+            if img.shape[2] == 4:
+                img = img[:, :, :3]
+            # Paddle expects BGR
+            img = img[:, :, ::-1]
+            yield img
 
 
 def build_markdown(pages_results):
